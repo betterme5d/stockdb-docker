@@ -1,0 +1,50 @@
+# free-stockdb 容器化部署
+#
+# 数据存放策略（重要）：
+#   默认使用具名卷 sdb-data，数据在 WSL2 的 ext4 上，LevelDB 性能正常。
+#   若改成 bind mount 挂载 Windows 目录（如 -v I:/xxx/data:/opt/stockdb/data），
+#   会走 Docker Desktop 的 9p/virtiofs，LevelDB 随机读性能会明显下降，不建议。
+
+services:
+  stockdb:
+    build: .
+    image: stockdb:0.3.5
+    container_name: stockdb
+    restart: unless-stopped
+    ports:
+      # 只映射到宿主机回环，避免把无鉴权的库暴露到局域网
+      - "127.0.0.1:7899:7899"
+    # 二进制没有 CLI 参数，换端口只能靠环境变量：
+    # environment:
+    #   STOCKDB_PORT: "8899"
+    volumes:
+      - sdb-data:/opt/stockdb/data
+      - sdb-mydb:/opt/stockdb/mydb
+      # 如需自定义同步源，挂载自己的 sync_url.txt：
+      # - ./sync_url.txt:/opt/stockdb/sync_url.txt:ro
+    # 可选：限制资源，避免 LevelDB compaction 吃满磁盘 IO
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 8g
+
+  # 每日增量同步（可选，按需启用：docker compose --profile sync up -d）
+  # 注意：同步期间必须先停 stockdb 服务，否则 LevelDB 文件被占用会同步失败。
+  # 这里用「先停后同步再启动」的串行脚本，见 sync.sh
+  stockdb-sync:
+    build: .
+    image: stockdb:0.3.5
+    container_name: stockdb-sync
+    profiles: ["sync"]
+    restart: "no"
+    # 用 sh -c 显式包一层：直接覆盖 entrypoint 的话，镜像的 CMD（配置文件路径）
+    # 仍会被追加进去，变成 stockdb_updater /opt/stockdb/stockdb.conf
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["exec /opt/stockdb/stockdb_updater"]
+    volumes:
+      - sdb-data:/opt/stockdb/data
+      - sdb-mydb:/opt/stockdb/mydb
+
+volumes:
+  sdb-data:
+  sdb-mydb:

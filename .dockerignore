@@ -1,0 +1,9 @@
+# 构建上下文里不需要的东西
+build/
+.git/
+.github/
+*.md
+*.json
+sync.sh
+build-push.sh
+docker-compose.yml

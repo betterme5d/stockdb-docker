@@ -1,0 +1,14 @@
+# 脚本必须 LF，否则克隆到 Linux/容器内执行会因 #!/bin/sh\r 直接报错
+*.sh            text eol=lf
+docker-entrypoint.sh  text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.md            text eol=lf
+LICENSE         text eol=lf
+.gitignore      text eol=lf
+.dockerignore   text eol=lf
+
+# PowerShell 脚本在 Windows 上执行，保持 CRLF
+*.ps1           text eol=crlf
+
+* text=auto

@@ -1,0 +1,111 @@
+# 构建并发布 free-stockdb 镜像到 GHCR
+#
+# 前置：把本目录作为仓库根目录推送到 GitHub，Actions 会自动获得 GITHUB_TOKEN
+#       与 packages:write 权限；镜像地址为 ghcr.io/<owner>/<repo>。
+#
+# 说明：发布包是官方预编译二进制，容器内不编译源码，
+#      arm64 走 QEMU 只为执行 apk/curl，整体几分钟内完成。
+
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            base_image: debian:bookworm-slim
+            asset_arch: manylinux-x64
+            asset_sha256: 9ec47250f60cd35462446dfcf34db99ef33e6b73b3f02f0970ef329722c265cf
+          - platform: linux/arm64
+            base_image: alpine:3.20
+            asset_arch: alpine-arm64
+            asset_sha256: 40d98307e57d9153657352a1a4f89cda5d8c74615fc7f9a72d45a7dfe2132138
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.base_image }}
+            ASSET_ARCH=${{ matrix.asset_arch }}
+            ASSET_SHA256=${{ matrix.asset_sha256 }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list
+        run: |
+          cd /tmp/digests
+          args=""
+          for d in $(find . -type f | sed 's|^\./||'); do
+            args="$args --append ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:$d"
+          done
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            $args
+
+      - name: Inspect manifest
+        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

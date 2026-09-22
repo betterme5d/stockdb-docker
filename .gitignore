@@ -1,0 +1,18 @@
+# 运行产物
+sync.log
+up.log
+*.log
+
+# 构建/探测临时文件
+_*.txt
+_*.json
+_m.txt
+*.part
+
+# 本地数据（23GB，绝不能进仓库）
+data/
+mydb/
+
+# 系统
+.DS_Store
+Thumbs.db
